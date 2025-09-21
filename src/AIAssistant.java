@@ -13,11 +13,12 @@ public class AIAssistant {
 
     // Placeholder API endpoint.  In a real application, this would be a Google Cloud API endpoint.
     private static final String API_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key="; // Replace with actual API endpoint
-    private static final String[] API_KEYS = {"AIzaSyDdh_DU1svQMbglwpCWD4px91O7qp2K8Mg", //vijay.patel.it09
-                                                "AIzaSyApG8Vk1L5Fbkv3HbgEUrT4ca7ytX6iXYw", //sixmind
-                                                "AIzaSyCLDvbXX9BtHl9mviX91somalvn548ECaA",  //vijay.m.java
-                                                "AIzaSyDeFPQSe3RRK9UFJktPL6N570qfz-nTFRs", //rinkal.patel.it09
-                                                "AIzaSyAgyuH7VXglYgTFictsjxLBL9QHXPmlTrw" //vijay.vora.photo.1@gmail.com
+    private static final String[] API_KEYS = {
+            "AIzaSyDzg6m5LqxjumENU7_f1lT4pY6X6Uv2DNI", // vijay.patel.ai.api.1
+            "AIzaSyCw7sey7EFpn8gmFGvOTDQSi8Xp4ABo8z8", // vijay.patel.ai.api.2
+            "AIzaSyCSOWJ91U_gz9tJf2SrFvP-4r6ElpnYHPI", // vijay.patel.ai.api.3
+            "AIzaSyDGHhNQ2fFMoO4ZydufhrbaInG_1O8rCzc", // vijay.patel.ai.api.4
+            "AIzaSyAo9BN4YL2nWyEhmsxsVG49kcl9zt83W50" // vijay.patel.ai.api.5
                                                 };
 
     /**
@@ -30,61 +31,52 @@ public class AIAssistant {
     private static int currentKeySequence = 0;
 
     public static String sendRequestToAI(String query) throws IOException {
-
-        HttpURLConnection connection = null;
-        try {
-            connection = sendQueryToAITool(query, currentKeySequence);
-        }catch(Exception e) {
-            //e.printStackTrace();
-            System.out.println("Looks like it;s 429 (Too many requests) error, change key");
-
+        int maxKeys = API_KEYS.length;
+        while (true) {
             try {
-                connection = sendQueryToAITool(query, getNextKeySequence());
-            } catch (Exception e1) {
-                //e1.printStackTrace();
-                System.out.println("Looks like it;s 429 (Too many requests) error, change key AGAIN last time");
-
-                // If all keys are having rate limit error, Wait for 30second
-               try {
-                        System.out.println("--------- Waiting for 30 secs ------------");
-                        Thread.sleep(0);
-                } catch (InterruptedException e3) {
-                    Thread.currentThread().interrupt(); // Restore interrupted status
-                    System.out.println("Thread was interrupted, failed to complete sleep");
+                HttpURLConnection connection = sendQueryToAITool(query, currentKeySequence);
+                int responseCode = connection.getResponseCode();
+                if (responseCode == 200) {
+                    try (BufferedReader reader = new BufferedReader(new InputStreamReader(connection.getInputStream(), StandardCharsets.UTF_8))) {
+                        StringBuilder response = new StringBuilder();
+                        String line;
+                        while ((line = reader.readLine()) != null) {
+                            response.append(line);
+                        }
+                        String responseJsonString = response.toString();
+                        String coreResponse = parseAIResponse(responseJsonString);
+                        connection.disconnect();
+                        return coreResponse;
+                    }
+                } else if (responseCode == 429) {
+                    System.out.println("429 (Too many requests) error, switching key");
+                    connection.disconnect();
+                    currentKeySequence++;
+                    if (currentKeySequence == maxKeys) {
+                        System.out.println("All keys exhausted. Waiting for 30 seconds before retrying from first key...");
+                        try { Thread.sleep(30000); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); }
+                        currentKeySequence = 0;
+                    }
+                } else {
+                    // Other error, just return error
+                    BufferedReader reader = new BufferedReader(new InputStreamReader(connection.getErrorStream(), StandardCharsets.UTF_8));
+                    StringBuilder response = new StringBuilder();
+                    String line;
+                    while ((line = reader.readLine()) != null) {
+                        response.append(line);
+                    }
+                    connection.disconnect();
+                    return "Error: " + responseCode + " - " + response.toString();
                 }
-
-                try {
-                    connection = sendQueryToAITool(query, getNextKeySequence());
-                } catch (Exception e2) {
-                    e2.printStackTrace();;
-                    System.out.println("Looks like it;s something different than 429");
-                    throw new RuntimeException(e2);
+            } catch (Exception e) {
+                System.out.println("Error with key " + currentKeySequence + ": " + e.getMessage());
+                currentKeySequence++;
+                if (currentKeySequence == maxKeys) {
+                    System.out.println("All keys exhausted due to exception. Waiting for 30 seconds before retrying from first key...");
+                    try { Thread.sleep(30000); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); }
+                    currentKeySequence = 0;
                 }
             }
-        }
-
-
-        // Get the response code.
-        int responseCode = connection.getResponseCode();
-
-        // Read the response from the connection's input stream.
-        try (BufferedReader reader = new BufferedReader(new InputStreamReader(connection.getInputStream(), StandardCharsets.UTF_8))) {
-            StringBuilder response = new StringBuilder();
-            String line;
-            while ((line = reader.readLine()) != null) {
-                response.append(line);
-            }
-
-            // Handle different response codes.
-            if (responseCode == HttpURLConnection.HTTP_OK) {
-                String responseJsonString = response.toString(); // Return the AI's response.
-                String coreResponse = parseAIResponse(responseJsonString);
-                return coreResponse;
-            } else {
-                return "Error: " + responseCode + " - " + response.toString(); // Return the error response.
-            }
-        } finally {
-            connection.disconnect(); // Close the connection.
         }
     }
 
@@ -149,6 +141,50 @@ public class AIAssistant {
         return coreResponse;
     }
 
+    /**
+     * Sends a request to the AI service, iterating through all API keys.
+     * If all keys fail, waits 30 seconds and retries from the first key.
+     * Repeats until a request succeeds.
+     */
+    public static String sendRequestWithRetry(String query) {
+        int maxKeys = API_KEYS.length;
+        while (true) {
+            for (int i = 0; i < maxKeys; i++) {
+                try {
+                    HttpURLConnection connection = sendQueryToAITool(query, i);
+                    int statusCode = connection.getResponseCode();
+                    if (statusCode == 200) {
+                        BufferedReader in = new BufferedReader(new InputStreamReader(connection.getInputStream()));
+                        StringBuilder response = new StringBuilder();
+                        String inputLine;
+                        while ((inputLine = in.readLine()) != null) {
+                            response.append(inputLine);
+                        }
+                        in.close();
+                        return parseAIResponse(response.toString());
+                    } else if (statusCode == 429) {
+                        System.out.println("Key " + i + " rate limited. Trying next key...");
+                        continue;
+                    } else {
+                        System.out.println("Key " + i + " failed with status: " + statusCode);
+                        continue;
+                    }
+                } catch (Exception e) {
+                    System.out.println("Key " + i + " failed: " + e.getMessage());
+                    continue;
+                }
+            }
+            System.out.println("All keys failed. Waiting 30 seconds before retrying...");
+            try {
+                Thread.sleep(30000);
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+                break;
+            }
+        }
+        return null;
+    }
+
     // For Internal Testing
     public static void main(String[] args) {
         try {
@@ -171,4 +207,3 @@ public class AIAssistant {
         return currentKeySequence;
     }
 }
-
